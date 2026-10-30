@@ -1,0 +1,66 @@
+name: build-windows-desktop
+
+# 手动/推送触发的轻量 Windows 构建：只产出一个免安装的 win32-x64 桌面客户端 zip。
+# 不签名、不发版、不碰 R2 与任何 secret。
+
+on:
+  push:
+    branches: [win-desktop-build]
+    paths:
+      - '.github/workflows/build-windows-desktop-manual.yml'
+      - 'TRIGGER_BUILD'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Report toolchain
+        run: |
+          node -v
+          npm -v
+          where csc.exe || dir C:\Windows\Microsoft.NET\Framework64\
+
+      - name: Install dependencies (monorepo)
+        run: npm ci --no-audit --no-fund
+        env:
+          npm_config_registry: https://registry.npmmirror.com
+
+      - name: Build renderer + main bundles
+        run: npm run build --workspace apps/desktop
+        env:
+          npm_config_registry: https://registry.npmmirror.com
+
+      - name: Package win32-x64 (zip, no signing)
+        working-directory: apps/desktop
+        run: node scripts/run-electron-builder.mjs --win zip --publish never
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+          npm_config_registry: https://registry.npmmirror.com
+
+      - name: List artifacts
+        run: |
+          Get-ChildItem apps\desktop\release -Recurse -Depth 1 | Select-Object FullName, Length | Format-Table -AutoSize
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hermes-desktop-win64
+          path: |
+            apps/desktop/release/*.zip
+            apps/desktop/release/win-unpacked/**
+          if-no-files-found: error
+          retention-days: 14
